@@ -315,7 +315,7 @@ class SchluterAPI:
         if not self._session_id:
             raise SchluterAPIError("Must connect first")
         
-        url = f"{BASE_URL}location"
+        url = f"{BASE_URL}locations"
         
         headers = {
             "session-id": self._session_id,
@@ -371,6 +371,8 @@ class SchluterAPI:
             ) as response:
                 response.raise_for_status()
                 data = await response.json()
+                if isinstance(data, list):
+                    return data
                 return data.get("devices", [])
                 
         except Exception as e:

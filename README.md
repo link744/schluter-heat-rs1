@@ -43,17 +43,14 @@ Control your Schluter DITRA-HEAT-E-RS1 WiFi floor heating thermostats from Home 
 
 1. Go to https://schluterditraheat.com and log in
 2. Press `F12` to open console
-3. Paste this and press Enter:
-```javascript
-copy(localStorage.getItem('neviwebRefreshToken'))
-```
-4. Your token is now in your clipboard!
+3. Go to Network -> attribute -> Session-Id
+4. Copy that
 
 **Step 2: Add integration** (30 seconds)
 
 1. In Home Assistant: **Settings** → **Devices & Services** → **Add Integration**
 2. Search "Schluter DITRA-HEAT-E-RS1"
-3. Paste your refresh token
+3. Paste your Session-Id token
 4. If you have multiple locations, select which one
 5. Done!
 
