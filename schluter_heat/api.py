@@ -54,13 +54,28 @@ class SchluterThermostat:
 
 
 class SchluterAuthenticationError(Exception):
-    """Authentication failed"""
-    pass
+    """Authentication failed (bad credentials or invalid refresh token)."""
+
+    # The stored refresh token is itself invalid/expired. This is NOT
+    # recoverable without user action (a fresh token from the web app).
+    REQUIRES_REAUTH = True
+
+
+class SchluterSessionExpired(SchluterAuthenticationError):
+    """The active session expired but the stored refresh token is still good.
+
+    Recoverable: calling login() again re-establishes the session.
+    The Neviweb API returns this as HTTP 200 with an error body
+    (``{"error": {"code": "USRSESSEXP"}}``), so it never surfaces as a
+    raise_for_status() failure - it must be detected explicitly.
+    """
+
+    REQUIRES_REAUTH = False
 
 
 class SchluterAPIError(Exception):
-    """General API error"""
-    pass
+    """General API error (network failure, bad status, malformed payload)."""
+
 
 
 class SchluterAPI:
@@ -108,6 +123,83 @@ class SchluterAPI:
         
         return headers
     
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        auth_required: bool = True,
+    ) -> Dict[str, Any]:
+        """Perform an HTTP request and classify Neviweb API errors.
+
+        The Neviweb API signals most failures with HTTP 200 plus an
+        ``error`` body, e.g.::
+
+            {"error": {"code": "USRSESSEXP"}}   # session expired
+            {"error": {"code": "ACCSESSEXC"}}   # too many active sessions
+
+        Relying on ``raise_for_status()`` alone (the previous behaviour)
+        misses every one of these, which is why sessions that expired
+        mid-day were never detected.
+
+        Raises:
+            SchluterSessionExpired: session died, refresh token may be fine.
+            SchluterAuthenticationError: refresh token itself is dead.
+            SchluterAPIError: transport / status / parse failures.
+        """
+        req_headers = self._get_headers() if headers is None else headers
+
+        try:
+            async with self._session.request(
+                method,
+                url,
+                params=params,
+                json=json,
+                headers=req_headers,
+                timeout=DEFAULT_TIMEOUT,
+            ) as response:
+                data = await response.json()
+        except Exception as e:
+            raise SchluterAPIError(f"Request to {url} failed: {e}") from e
+
+        # HTTP-level failures first (401/403/5xx...)
+        if response.status in (401, 403):
+            if auth_required and self._refresh_token:
+                raise SchluterSessionExpired(
+                    f"HTTP {response.status} from {url} - session rejected"
+                )
+            raise SchluterAuthenticationError(
+                f"HTTP {response.status} from {url} - authentication failed"
+            )
+        if response.status >= 400:
+            raise SchluterAPIError(
+                f"HTTP {response.status} from {url}: {str(data)[:200]}"
+            )
+
+        # HTTP 200 but the body carries an error object
+        if isinstance(data, dict) and "error" in data:
+            error = data["error"]
+            code = str(error.get("code") if isinstance(error, dict) else error).upper()
+            _LOGGER.error(
+                "Neviweb API error %s from %s (full body: %s)",
+                code or "?", url, self._sanitize_response(data),
+            )
+            if "SESS" in code or "EXPIR" in code or "USRSESSEXP" in code:
+                raise SchluterSessionExpired(
+                    f"Session expired (code {code or 'unknown'}): {url}"
+                )
+            if "ACCSESSEXC" in code or "TOOMANY" in code or "ACTIVE" in code:
+                raise SchluterAPIError(
+                    f"Too many active sessions (code {code}): close other "
+                    f"Schluter/Neviweb sessions (web, phone) and retry"
+                )
+            raise SchluterAPIError(f"Neviweb API error {code or 'unknown'}: {url}")
+
+        return data
+    
     async def login_with_credentials(
         self, username: str, password: str
     ) -> Dict[str, Any]:
@@ -135,56 +227,58 @@ class SchluterAPI:
         }
         
         try:
-            async with self._session.post(
-                url,
-                json=payload,
-                timeout=DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                # Log response structure for debugging
-                _LOGGER.debug(f"Login response keys: {list(data.keys())}")
-                
-                # Extract refresh token from response - try multiple possible keys
-                refresh_token = None
-                
-                # Try different possible key names
-                for key in ["refreshToken", "refresh_token", "RefreshToken", "REFRESH_TOKEN"]:
-                    if key in data:
-                        refresh_token = data[key]
-                        _LOGGER.debug(f"Found refresh token with key: {key}")
-                        break
-                
-                # Try nested locations
-                if not refresh_token and "session" in data:
-                    session_data = data["session"]
-                    for key in ["refreshToken", "refresh_token"]:
-                        if key in session_data:
-                            refresh_token = session_data[key]
-                            _LOGGER.debug(f"Found refresh token in session.{key}")
-                            break
-                
-                if not refresh_token:
-                    _LOGGER.error(f"No refresh token in response. Response keys: {list(data.keys())}")
-                    _LOGGER.error(f"Full response (sanitized): {self._sanitize_response(data)}")
-                    raise SchluterAuthenticationError("No refresh token received")
-                
-                self._refresh_token = refresh_token
-                self._access_token = data.get("access_token") or data.get("accessToken") or data.get("session", {}).get("access_token")
-                
-                if "user" in data:
-                    self._user_id = data["user"].get("id")
-                    self._account_id = data["user"].get("account$id") or data["user"].get("accountId")
-                
-                _LOGGER.info(f"Login successful. User ID: {self._user_id}")
-                return data
-                
-        except SchluterAuthenticationError:
-            raise
-        except Exception as e:
-            _LOGGER.error(f"Login with credentials failed: {e}")
-            raise SchluterAuthenticationError(f"Login failed: {e}")
+            data = await self._request(
+                "POST", url, json=payload, auth_required=False
+            )
+        except SchluterAPIError as e:
+            _LOGGER.error("Login with credentials failed: %s", e)
+            raise SchluterAuthenticationError(f"Login failed: {e}") from e
+        except SchluterSessionExpired as e:
+            # Should not happen for a fresh credentials login, but treat
+            # as an auth failure rather than a recoverable session issue.
+            _LOGGER.error("Login with credentials rejected: %s", e)
+            raise SchluterAuthenticationError(f"Login failed: {e}") from e
+        
+        # Log response structure for debugging
+        _LOGGER.debug("Login response keys: %s", list(data.keys()))
+
+        # Extract refresh token from response - try multiple possible keys
+        refresh_token = None
+
+        # Try different possible key names
+        for key in ["refreshToken", "refresh_token", "RefreshToken", "REFRESH_TOKEN"]:
+            if key in data:
+                refresh_token = data[key]
+                _LOGGER.debug("Found refresh token with key: %s", key)
+                break
+
+        # Try nested locations
+        if not refresh_token and "session" in data:
+            session_data = data["session"]
+            for key in ["refreshToken", "refresh_token"]:
+                if key in session_data:
+                    refresh_token = session_data[key]
+                    _LOGGER.debug("Found refresh token in session.%s", key)
+                    break
+
+        if not refresh_token:
+            _LOGGER.error("No refresh token in response. Response keys: %s", list(data.keys()))
+            _LOGGER.error("Full response (sanitized): %s", self._sanitize_response(data))
+            raise SchluterAuthenticationError("No refresh token received")
+
+        self._refresh_token = refresh_token
+        self._access_token = (
+            data.get("access_token")
+            or data.get("accessToken")
+            or data.get("session", {}).get("access_token")
+        )
+
+        if "user" in data:
+            self._user_id = data["user"].get("id")
+            self._account_id = data["user"].get("account$id") or data["user"].get("accountId")
+
+        _LOGGER.info("Login successful. User ID: %s", self._user_id)
+        return data
     
     def _sanitize_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Sanitize response for logging - remove sensitive data"""
@@ -221,34 +315,36 @@ class SchluterAPI:
         }
         
         try:
-            async with self._session.post(
+            data = await self._request(
+                "POST",
                 url,
                 json=payload,
-                timeout=DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                # Store tokens and session info
-                self._refresh_token = refresh_token
-                self._access_token = data.get("access_token")
-                
-                # Extract session ID from login response
-                if "session" in data:
-                    self._session_id = data["session"]
-                    _LOGGER.info(f"Session ID obtained from login: {self._session_id[:20]}...")
-                
-                # Extract user info
-                if "user" in data:
-                    self._user_id = data["user"].get("id")
-                    self._account_id = data["user"].get("account$id") or data.get("account", {}).get("id")
-                
-                _LOGGER.info(f"Login successful. User ID: {self._user_id}, Account ID: {self._account_id}")
-                return data
-                
-        except Exception as e:
-            _LOGGER.error(f"Login failed: {e}")
-            raise SchluterAuthenticationError(f"Login failed: {e}")
+                auth_required=False,
+            )
+        except SchluterAPIError as e:
+            _LOGGER.error("Login failed: %s", e)
+            raise SchluterAuthenticationError(f"Login failed: {e}") from e
+        
+        # A dead/invalid refresh token surfaces either as an HTTP 401/403
+        # (handled above) or as an API error body.
+        self._refresh_token = refresh_token
+        self._access_token = data.get("access_token")
+        self._session_id = None
+        self._user_id = None
+        self._account_id = None
+        
+        # Extract session ID from login response
+        if "session" in data:
+            self._session_id = data["session"]
+            _LOGGER.info("Session ID obtained from login: %s...", str(self._session_id)[:20])
+        
+        # Extract user info
+        if "user" in data:
+            self._user_id = data["user"].get("id")
+            self._account_id = data["user"].get("account$id") or data.get("account", {}).get("id")
+        
+        _LOGGER.info("Login successful. User ID: %s, Account ID: %s", self._user_id, self._account_id)
+        return data
     
     async def connect(self) -> str:
         """
@@ -267,39 +363,31 @@ class SchluterAPI:
         headers = {"refreshToken": self._refresh_token}
         
         try:
-            async with self._session.post(
-                url,
-                headers=headers,
-                timeout=DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                _LOGGER.debug(f"Connect response keys: {list(data.keys())}")
-                
-                # Try different possible session key locations
-                session_id = None
-                if "session" in data:
-                    session_id = data["session"]
-                elif "sessionId" in data:
-                    session_id = data["sessionId"]
-                elif "session_id" in data:
-                    session_id = data["session_id"]
-                
-                if not session_id:
-                    _LOGGER.error(f"No session ID in connect response. Keys: {list(data.keys())}")
-                    _LOGGER.error(f"Full response: {data}")
-                    raise SchluterAuthenticationError("No session ID in connect response")
-                
-                self._session_id = session_id
-                _LOGGER.info(f"Connected. Session ID obtained: {session_id[:20]}...")
-                return self._session_id
-                
-        except SchluterAuthenticationError:
-            raise
-        except Exception as e:
-            _LOGGER.error(f"Connect failed: {e}")
-            raise SchluterAuthenticationError(f"Connect failed: {e}")
+            data = await self._request(
+                "POST", url, headers=headers, auth_required=True
+            )
+        except SchluterAPIError as e:
+            raise SchluterAuthenticationError(f"Connect failed: {e}") from e
+        
+        _LOGGER.debug("Connect response keys: %s", list(data.keys()))
+        
+        # Try different possible session key locations
+        session_id = None
+        if "session" in data:
+            session_id = data["session"]
+        elif "sessionId" in data:
+            session_id = data["sessionId"]
+        elif "session_id" in data:
+            session_id = data["session_id"]
+        
+        if not session_id:
+            _LOGGER.error("No session ID in connect response. Keys: %s", list(data.keys()))
+            _LOGGER.error("Full response: %s", self._sanitize_response(data))
+            raise SchluterAuthenticationError("No session ID in connect response")
+        
+        self._session_id = session_id
+        _LOGGER.info("Connected. Session ID obtained: %s...", str(session_id)[:20])
+        return session_id
     
     async def get_locations(self) -> List[Dict[str, Any]]:
         """
@@ -321,26 +409,15 @@ class SchluterAPI:
             "session-id": self._session_id,
         }
         
-        try:
-            async with self._session.get(
-                url,
-                headers=headers,
-                timeout=DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                # Response is a list of locations
-                if isinstance(data, list):
-                    _LOGGER.info(f"Found {len(data)} location(s)")
-                    return data
-                else:
-                    _LOGGER.warning(f"Unexpected locations response format: {type(data)}")
-                    return []
-                    
-        except Exception as e:
-            _LOGGER.error(f"Failed to get locations: {e}")
-            raise SchluterAPIError(f"Failed to get locations: {e}")
+        data = await self._request("GET", url, headers=headers)
+        
+        # Response is a list of locations
+        if isinstance(data, list):
+            _LOGGER.info("Found %d location(s)", len(data))
+            return data
+        else:
+            _LOGGER.warning("Unexpected locations response format: %s", type(data))
+            return []
     
     async def get_devices(self, location_id: int) -> List[Dict[str, Any]]:
         """
@@ -360,24 +437,12 @@ class SchluterAPI:
             "includedLocationChildren": "true",
             "location$id": location_id
         }
-        headers = self._get_headers()
         
-        try:
-            async with self._session.get(
-                url,
-                params=params,
-                headers=headers,
-                timeout=DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                if isinstance(data, list):
-                    return data
-                return data.get("devices", [])
-                
-        except Exception as e:
-            _LOGGER.error(f"Get devices failed: {e}")
-            raise SchluterAPIError(f"Failed to get devices: {e}")
+        data = await self._request("GET", url, params=params)
+        
+        if isinstance(data, list):
+            return data
+        return data.get("devices", [])
     
     async def get_thermostat_status(self, device_id: int) -> SchluterThermostat:
         """
@@ -411,41 +476,28 @@ class SchluterAPI:
         ]
         
         params = {"attributes": ",".join(attributes)}
-        headers = self._get_headers()
         
-        try:
-            async with self._session.get(
-                url,
-                params=params,
-                headers=headers,
-                timeout=DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                # Parse response into SchluterThermostat object
-                thermostat = SchluterThermostat(
-                    device_id=device_id,
-                    name=f"Device {device_id}",  # Will be updated from device list
-                    current_temp=data.get("roomTemperatureDisplay", {}).get("value"),
-                    target_temp=data.get("roomSetpoint"),
-                    min_temp=data.get("roomSetpointMin", 5.0),
-                    max_temp=data.get("roomSetpointMax", 33.0),
-                    setpoint_mode=data.get("setpointMode"),
-                    occupancy_mode=data.get("occupancyMode"),
-                    heating=(data.get("outputPercentDisplay", {}).get("percent", 0) > 0),
-                    heating_percent=data.get("outputPercentDisplay", {}).get("percent", 0),
-                    air_floor_mode=data.get("airFloorMode"),
-                    gfci_status=data.get("gfciStatus"),
-                    floor_setpoint_pwm=data.get("floorSetpointPwm"),
-                    temp_display_status=data.get("roomTemperatureDisplay", {}).get("status")
-                )
-                
-                return thermostat
-                
-        except Exception as e:
-            _LOGGER.error(f"Get thermostat status failed: {e}")
-            raise SchluterAPIError(f"Failed to get thermostat status: {e}")
+        data = await self._request("GET", url, params=params)
+        
+        # Parse response into SchluterThermostat object
+        thermostat = SchluterThermostat(
+            device_id=device_id,
+            name=f"Device {device_id}",  # Will be updated from device list
+            current_temp=data.get("roomTemperatureDisplay", {}).get("value"),
+            target_temp=data.get("roomSetpoint"),
+            min_temp=data.get("roomSetpointMin", 5.0),
+            max_temp=data.get("roomSetpointMax", 33.0),
+            setpoint_mode=data.get("setpointMode"),
+            occupancy_mode=data.get("occupancyMode"),
+            heating=(data.get("outputPercentDisplay", {}).get("percent", 0) > 0),
+            heating_percent=data.get("outputPercentDisplay", {}).get("percent", 0),
+            air_floor_mode=data.get("airFloorMode"),
+            gfci_status=data.get("gfciStatus"),
+            floor_setpoint_pwm=data.get("floorSetpointPwm"),
+            temp_display_status=data.get("roomTemperatureDisplay", {}).get("status")
+        )
+        
+        return thermostat
     
     async def set_temperature(self, device_id: int, temperature: float) -> bool:
         """
@@ -462,33 +514,22 @@ class SchluterAPI:
             raise SchluterAuthenticationError("Not connected")
         
         url = f"{BASE_URL}device/{device_id}/attribute"
-        headers = self._get_headers()
         
         payload = {
             "roomSetpoint": temperature
         }
         
-        try:
-            async with self._session.put(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                # Verify the temperature was set
-                if data.get("roomSetpoint") == temperature:
-                    _LOGGER.info(f"Set temperature to {temperature}°C for device {device_id}")
-                    return True
-                else:
-                    _LOGGER.warning(f"Temperature mismatch. Requested: {temperature}, Got: {data.get('roomSetpoint')}")
-                    return False
-                    
-        except Exception as e:
-            _LOGGER.error(f"Set temperature failed: {e}")
-            raise SchluterAPIError(f"Failed to set temperature: {e}")
+        data = await self._request("PUT", url, json=payload)
+        
+        # Verify the temperature was set
+        if data.get("roomSetpoint") == temperature:
+            _LOGGER.info("Set temperature to %s°C for device %s", temperature, device_id)
+            return True
+        _LOGGER.warning(
+            "Temperature mismatch. Requested: %s, Got: %s",
+            temperature, data.get("roomSetpoint"),
+        )
+        return False
     
     async def set_mode(self, device_id: int, mode: str) -> bool:
         """
@@ -508,26 +549,14 @@ class SchluterAPI:
             raise SchluterAuthenticationError("Not connected")
         
         url = f"{BASE_URL}device/{device_id}/attribute"
-        headers = self._get_headers()
         
         payload = {
             "setpointMode": mode
         }
         
-        try:
-            async with self._session.put(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                _LOGGER.info(f"Set mode to '{mode}' for device {device_id}")
-                return True
-                
-        except Exception as e:
-            _LOGGER.error(f"Set mode failed: {e}")
-            raise SchluterAPIError(f"Failed to set mode: {e}")
+        await self._request("PUT", url, json=payload)
+        _LOGGER.info("Set mode to '%s' for device %s", mode, device_id)
+        return True
     
     async def set_occupancy_mode(self, device_id: int, occupancy: str) -> bool:
         """
@@ -547,26 +576,14 @@ class SchluterAPI:
             raise SchluterAuthenticationError("Not connected")
         
         url = f"{BASE_URL}device/{device_id}/attribute"
-        headers = self._get_headers()
         
         payload = {
             "occupancyMode": occupancy
         }
         
-        try:
-            async with self._session.put(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                _LOGGER.info(f"Set occupancy to '{occupancy}' for device {device_id}")
-                return True
-                
-        except Exception as e:
-            _LOGGER.error(f"Set occupancy failed: {e}")
-            raise SchluterAPIError(f"Failed to set occupancy: {e}")
+        await self._request("PUT", url, json=payload)
+        _LOGGER.info("Set occupancy to '%s' for device %s", occupancy, device_id)
+        return True
     
     async def logout(self) -> bool:
         """
