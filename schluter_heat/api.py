@@ -85,13 +85,12 @@ class SchluterAPI:
     Usage:
         async with ClientSession() as session:
             api = SchluterAPI(session)
-            
-            # Login (need refresh token from initial web login)
-            await api.login(refresh_token)
-            
-            # Get session
-            await api.connect()
-            
+
+            # Use the browser Session-Id directly (no login). This is what
+            # the website does on every request and is the value the user
+            # copies from the browser Network tab.
+            api.set_session_id(session_id)
+
             # Get devices
             devices = await api.get_devices(location_id)
             
@@ -110,7 +109,19 @@ class SchluterAPI:
         self._access_token: Optional[str] = None
         self._user_id: Optional[int] = None
         self._account_id: Optional[int] = None
-    
+
+    def set_session_id(self, session_id: str) -> None:
+        """Use a browser Session-Id directly, without any login step.
+
+        The schluterditraheat.com web app authenticates every API request
+        with a ``Session-Id`` header (the value the user copies from the
+        browser's Network tab). The integration mirrors that behaviour
+        instead of calling the Neviweb ``login``/refresh-token endpoint,
+        which is a *different* auth scheme and rejects a website Session-Id
+        (surfacing to the user as ``invalid_auth``).
+        """
+        self._session_id = session_id
+
     def _get_headers(self) -> Dict[str, str]:
         """Get common headers for API requests"""
         headers = {

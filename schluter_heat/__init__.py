@@ -33,13 +33,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Schluter DITRA-HEAT from a config entry."""
     session = async_get_clientsession(hass)
     api = SchluterAPI(session)
-    
-    # Authenticate
-    try:
-        await api.login(entry.data[CONF_REFRESH_TOKEN])
-    except (SchluterAuthenticationError, SchluterAPIError) as err:
-        _LOGGER.error("Failed to authenticate with Schluter API: %s", err)
-        return False
+
+    # The stored credential is the browser Session-Id (see README). Use it
+    # directly as the session-id header, the same way the website does.
+    # There is deliberately no login() step here: that Neviweb refresh-token
+    # endpoint rejects a website Session-Id and was the source of the
+    # ``invalid_auth`` setup failure.
+    api.set_session_id(entry.data[CONF_REFRESH_TOKEN].strip())
 
     # Create coordinator
     coordinator = SchluterDataUpdateCoordinator(
@@ -106,26 +106,22 @@ class SchluterDataUpdateCoordinator(DataUpdateCoordinator):
             data = await self._async_fetch_devices()
             return data
         except SchluterSessionExpired as err:
-            # Session died; refresh token may still be good. Re-login and
-            # retry exactly once (no recursion).
-            _LOGGER.warning("Schluter session expired, re-logging in: %s", err)
-            try:
-                await self._relogin()
-                data = await self._async_fetch_devices()
-            except (SchluterSessionExpired, SchluterAuthenticationError) as retry_err:
-                # The stored refresh token could not re-establish a session.
-                self._async_schedule_reauth()
-                raise UpdateFailed(
-                    "Authentication failed. Please update your refresh token."
-                ) from retry_err
-            _LOGGER.info("Schluter session re-established and data refreshed")
-            return data
-
-        except SchluterAuthenticationError as err:
-            # Refresh token itself is invalid/expired - trigger reauth flow
+            # The stored Session-Id has expired. Unlike a Neviweb refresh
+            # token, a browser session cannot be refreshed from the stored
+            # value alone - the user must copy a fresh Session-Id from the
+            # website. Trigger the reauth flow so they can do exactly that.
+            _LOGGER.warning("Schluter Session-Id expired: %s", err)
             self._async_schedule_reauth()
             raise UpdateFailed(
-                "Authentication failed. Please update your refresh token."
+                "Session-Id has expired. Copy a fresh one from "
+                "schluterditraheat.com in your browser (see reauth prompt)."
+            ) from err
+
+        except SchluterAuthenticationError as err:
+            # Session-Id rejected outright - trigger reauth flow
+            self._async_schedule_reauth()
+            raise UpdateFailed(
+                "Authentication failed. Please update your Session-Id."
             ) from err
 
         except Exception as err:
@@ -169,9 +165,3 @@ class SchluterDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
 
         return data
-
-    async def _relogin(self) -> None:
-        """Re-establish the API session using the stored refresh token."""
-        refresh_token = self.config_entry.data[CONF_REFRESH_TOKEN]
-        await self.api.login(refresh_token)
-        _LOGGER.info("Schluter session re-established")

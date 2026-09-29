@@ -33,8 +33,9 @@
       }
     },
     "error": {
-      "invalid_auth": "Invalid refresh token or authentication failed",
-      "cannot_connect": "Unable to connect to Schluter API",
+      "invalid_auth": "Invalid Session-Id. Copy it from the browser Network tab (see Help).",
+      "session_expired": "That Session-Id has expired. Reload schluterditraheat.com in your browser and copy a fresh one (see Help).",
+      "cannot_connect": "Unable to connect to the Schluter API. Check your internet connection and try again.",
       "no_locations": "No locations found for this account",
       "no_devices": "No devices found at this location",
       "unknown": "Unexpected error occurred"
