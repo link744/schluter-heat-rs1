@@ -65,12 +65,28 @@ Control your Schluter DITRA-HEAT-E-RS1 WiFi floor heating thermostats from Home 
 
 ### Super Easy Setup (1 minute!)
 
-**Step 1: Get your refresh token** (30 seconds)
+**Step 1: Get your token** (30 seconds)
 
-1. Go to https://schluterditraheat.com and log in
-2. Press `F12` to open console
-3. Go to Network -> attribute -> Session-Id
-4. Copy that
+> ⚠️ **What you're looking for:** the Home Assistant setup form calls this
+> field **Refresh Token**, but the value it wants is the browser
+> **Session-Id** — the same token the schluterditraheat.com website sends
+> with every API request. **Yes, the HA "Refresh Token" *is* the
+> Session-Id.** It is **not** the website's separate `refreshToken` cookie
+> (see *Session-Id vs. "refresh token"* below).
+
+1. Open https://schluterditraheat.com in your browser and **log in**.
+2. Press `F12` to open the browser developer tools.
+3. Copy the Session-Id — use whichever of these is easiest:
+   - **One-liner (fastest):** in the **Console** tab, paste and run
+     `document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('session='))?.split('=')[1]`
+     — it prints the Session-Id; copy that value.
+   - **Network tab:** in the **Network** tab, click any API request
+     (for example `devices` or `ping`), open **Headers**, and copy the
+     value of the `session-id` **request** header.
+   - **Cookies tab:** under **Application** → **Cookies** →
+     `https://schluterditraheat.com`, copy the value of the `session`
+     cookie.
+4. Keep the value handy — you paste it in the next step.
 
 **Step 2: Add integration** (30 seconds)
 
@@ -83,6 +99,26 @@ Control your Schluter DITRA-HEAT-E-RS1 WiFi floor heating thermostats from Home 
 **We automatically detect your locations - no manual lookup needed!**
 
 Your thermostats will appear as climate entities!
+
+### Session-Id vs. the website's "refresh token" — are they the same?
+
+**Yes — the Home Assistant field is the Session-Id.** The setup form
+labels it *Refresh Token* for backward compatibility, but the value it
+wants is the **Session-Id** — the `session-id` request header the
+schluterditraheat.com website sends with every API call. The website also
+keeps a *separate* `refreshToken` cookie; that is a different value used
+only to re-establish a dead session, and it is **not** what this field
+wants (pasting it gives `invalid_auth`).
+
+| What the site stores | Where | Sent as | Paste this? |
+|---|---|---|---|
+| `session` cookie / `session-id` request header | Cookie `session=` | `session-id` header on every API call | ✅ **Yes** |
+| `refreshToken` cookie | Cookie `refreshToken=` | `refreshToken` header (only `/connect`, `/logout`) | ❌ **No** |
+
+Home Assistant uses the Session-Id directly, exactly like the website —
+no username/password login — so it has no use for the refresh token.
+When the token expires (every few weeks to a couple of months), just
+re-grab a fresh Session-Id and re-enter it (see **Troubleshooting**).
 
 ## Usage
 

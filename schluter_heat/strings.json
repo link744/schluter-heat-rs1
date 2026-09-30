@@ -8,7 +8,7 @@
           "refresh_token": "Refresh Token"
         },
         "data_description": {
-          "refresh_token": "Get this easily with one line of code - see documentation"
+          "refresh_token": "This is your browser Session-Id (the session-id header the website sends). YES — it is the same value Home Assistant asks for here as the 'Refresh Token'; it is NOT the site's separate refreshToken cookie. Get it in ~30s: log in at schluterditraheat.com, press F12, and in the Console run: document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('session='))?.split('=')[1]"
         }
       },
       "location": {
@@ -28,7 +28,7 @@
           "refresh_token": "New Refresh Token"
         },
         "data_description": {
-          "refresh_token": "Get a fresh token - see documentation for easy method"
+          "refresh_token": "Same value as before: your browser Session-Id (session-id header). NOT the site's separate refreshToken cookie. Get it: log in at schluterditraheat.com, press F12, Console: document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('session='))?.split('=')[1]"
         }
       }
     },
