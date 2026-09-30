@@ -1,7 +1,5 @@
 # Schluter DITRA-HEAT-E-RS1 Integration for Home Assistant - Work in Progress - ALPHA not guranteed to work - there be dragons
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-
 
 Control your Schluter DITRA-HEAT-E-RS1 WiFi floor heating thermostats from Home Assistant!
 
@@ -20,132 +18,48 @@ Control your Schluter DITRA-HEAT-E-RS1 WiFi floor heating thermostats from Home 
 
 ## Installation
 
-### HACS (Recommended)
+> **Note:** Don't `git clone` directly into `custom_components/` — HA looks
+> for the manifest one folder deep, and this repo nests it under
+> `schluter_heat/`. Clone, then copy the folder in, as shown below.
 
-1. Open HACS in Home Assistant
-2. Click on "Integrations"
-3. Click the three dots in the top right corner
-4. Select "Custom repositories"
-5. Add this repository URL and select "Integration" as the category
-6. Click "Install"
-7. Restart Home Assistant
+1. Clone the repo:
 
-### Manual Installation
+   ```bash
+   git clone https://github.com/link744/schluter-heat-rs1.git ~/schluter-heat-rs1
+   ```
 
-No HACS needed — just copy the `schluter_heat` folder into your Home Assistant
-`custom_components` directory. Full walkthrough for Ubuntu Linux below.
+2. Copy the `schluter_heat` folder into your Home Assistant
+   `custom_components` directory, e.g. `/home/link744/homeassconfig/custom_components`:
 
-#### 1. Find your Home Assistant config directory
+   ```bash
+   cp -r ~/schluter-heat-rs1/schluter_heat /home/link744/homeassconfig/custom_components/
+   ```
 
-`custom_components` lives inside Home Assistant's configuration directory,
-whose location depends on how you installed HA:
+   Verify it landed:
 
-| Install method | Typical config directory |
-|---|---|
-| Home Assistant OS (default install) | `/config` |
-| Home Assistant Container / venv (e.g. via `docker`, systemd, or manual) | `~/.homeassistant` or wherever you point `--config` |
+   ```bash
+   ls /home/link744/homeassconfig/custom_components/schluter_heat
+   # Expected: __init__.py  api.py  climate.py  config_flow.py
+   #           const.py     manifest.json  sensor.py  strings.json
+   ```
 
-For an existing container/venv install, ask HA itself — in the HA UI go to
-**Settings → System → About** and note the *"Configuration folder"* path.
-Or on a venv/container install, check your service file or startup command
-for `--config /path/to/config`.
+3. Restart Home Assistant (HA OS: **Settings → System → Restart** at the
+   bottom of the page; container/venv: restart the service, e.g.
+   `sudo systemctl restart home-assistant`).
 
-In this example the config directory is `/home/link744/homeassconfig`, so the
-target is `/home/link744/homeassconfig/custom_components`.
+4. Check it loaded — **Settings → Devices & Services → Add Integration** and
+   search for **Schluter DITRA-HEAT-E-RS1**. If the name appears, it loaded.
+   If not, check **Settings → System → Logs** for lines mentioning
+   `schluter_heat`.
 
-#### 2. Download the integration (on Ubuntu)
-
-Open a terminal (`Ctrl+Alt+T`) and run:
-
-**Option A — Download the latest release zip (simplest):**
-
-```bash
-# Pick a release tag from the GitHub Releases page, e.g. v1.0.0
-TAG="v1.0.0"
-curl -L -o /tmp/schluter-heat-rs1.zip \
-  "https://github.com/link744/schluter-heat-rs1/archive/refs/tags/${TAG}.zip"
-```
-
-(If you don't have `curl` yet: `sudo apt update && sudo apt install -y curl`)
-
-**Option B — Clone the latest main branch with git:**
-
-```bash
-sudo apt update && sudo apt install -y git
-git clone https://github.com/link744/schluter-heat-rs1.git /tmp/schluter-heat-rs1
-```
-
-**Option C — Download the whole repo as a zip from the GitHub web UI:**
-
-Open https://github.com/link744/schluter-heat-rs1 → green **Code** button →
-**Download ZIP** → unzip in a terminal:
-
-```bash
-cd ~/Downloads
-unzip schluter-heat-rs1-main.zip
-```
-
-#### 3. Copy the `schluter_heat` folder into `custom_components`
-
-Create the folder (if it doesn't exist) and copy the integration folder in:
-
-```bash
-CONF_DIR=/home/link744/homeassconfig
-mkdir -p "$CONF_DIR/custom_components"
-```
-
-From **Option A** (zip):
-
-```bash
-unzip -o /tmp/schluter-heat-rs1.zip -d /tmp/
-cp -r /tmp/schluter-heat-rs1-*/schluter_heat \
-      /home/link744/homeassconfig/custom_components/
-```
-
-From **Option B** (git clone):
-
-```bash
-cp -r /tmp/schluter-heat-rs1/schluter_heat \
-      /home/link744/homeassconfig/custom_components/
-```
-
-From **Option C** (web zip):
-
-```bash
-cp -r ~/Downloads/schluter-heat-rs1-main/schluter_heat \
-      /home/link744/homeassconfig/custom_components/
-```
-
-Verify the layout — the folder must be `custom_components/schluter_heat/`
-(underscore), **not** `custom_components/schluter-heat-rs1/`:
-
-```bash
-ls "$CONF_DIR/custom_components/schluter_heat"
-# Expected: __init__.py  api.py  climate.py  config_flow.py
-#           const.py     manifest.json  sensor.py  strings.json
-```
-
-> **Upgrades (manual installs):** re-run the same download + `cp -r` on top of
-> the old folder (`cp -r .../schluter_heat/ "$CONF_DIR/custom_components/schluter_heat/"`),
-> then restart HA. There are no other steps.
-
-#### 4. Restart Home Assistant
-
-- **HA OS:** Settings → System → **Restart** (bottom of the page).
-- **Container/venv:** restart the service, e.g.
-  `sudo systemctl restart home-assistant` (or restart the container /
-  run `python3 -m homeassistant` again).
-
-#### 5. Check it loaded
-
-1. **Settings → Devices & Services → Add Integration** — search for
-   **Schluter DITRA-HEAT-E-RS1**. If the integration name appears, it loaded.
-2. If it does **not** appear, check **Settings → System → Logs** for any line
-   mentioning `schluter_heat` (missing files, import errors, wrong folder
-   name) and fix, then restart again.
-3. You can also force-load it without a full restart:
-   **Settings → Devices & Services → Reload** next to the integration
-   once it is installed.
+> **Upgrades:** `cd` into the cloned folder, run `git pull`, then copy the
+> folder over the old one:
+>
+> ```bash
+> cp -r ~/schluter-heat-rs1/schluter_heat/ /home/link744/homeassconfig/custom_components/schluter_heat/
+> ```
+>
+> then restart HA.
 
 ## Configuration
 
@@ -350,15 +264,16 @@ entities:
 ## Troubleshooting
 
 ### "Invalid authentication" error
-- Check that your email and password are correct
-- Try logging into schluterditraheat.com to verify credentials
+- Your Session-Id has expired (happens every 30-90 days)
+- Re-grab a fresh one from the browser console (see **Super Easy Setup**,
+  Step 1) and re-add the integration
 
 ### "Cannot connect" error
 - Check your internet connection
 - Verify the Schluter API is accessible (try visiting schluterditraheat.com)
 
 ### "No devices found" error
-- Verify your Location ID is correct
+- Make sure you selected the right location during setup
 - Make sure you have thermostats configured in your Schluter account
 
 ### Integration doesn't appear
@@ -367,13 +282,14 @@ entities:
 
 ### Integration requires reauthentication
 - Your session has expired (happens every 30-90 days)
-- Click "Configure" and enter your credentials again
+- Click "Configure" and paste a fresh Session-Id (see **Super Easy Setup**,
+  Step 1)
 - Takes only 15 seconds!
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-username/schluter-heat/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-username/schluter-heat/discussions)
+- **Issues**: [GitHub Issues](https://github.com/link744/schluter-heat-rs1/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/link744/schluter-heat-rs1/discussions)
 
 ## Credits
 

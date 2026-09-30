@@ -1,38 +1,54 @@
 # Installation & Setup Guide
 
-## Quick Start (1 minute!)
+## Install the Integration
 
-### Step 1: Install the Integration
+> **Note:** Don't `git clone` directly into `custom_components/` — HA looks
+> for the manifest one folder deep, and this repo nests it under
+> `schluter_heat/`. Clone, then copy the folder in, as shown below.
 
-**Option A: HACS (Easiest)**
-1. Open HACS → Integrations
-2. Click ⋮ (three dots) → Custom repositories
-3. Add: `https://github.com/your-username/schluter-heat-rs1`
-4. Category: Integration
-5. Click "Install"
-6. Restart Home Assistant
+1. Clone the repo:
 
-**Option B: Manual**
-1. Download the latest release
-2. Extract to `config/custom_components/schluter_heat/`
-3. Restart Home Assistant
+   ```bash
+   git clone https://github.com/link744/schluter-heat-rs1.git ~/schluter-heat-rs1
+   ```
+
+2. Copy the `schluter_heat` folder into your Home Assistant
+   `custom_components` directory, e.g. `/home/link744/homeassconfig/custom_components`:
+
+   ```bash
+   cp -r ~/schluter-heat-rs1/schluter_heat /home/link744/homeassconfig/custom_components/
+   ```
+
+3. Restart Home Assistant (HA OS: **Settings → System → Restart**;
+   container/venv: restart the service, e.g.
+   `sudo systemctl restart home-assistant`).
+
+**Upgrading later:** `cd` into the cloned folder, `git pull`, re-run the
+`cp -r` from step 2 on top of the old folder, then restart HA.
 
 ---
 
 ### Step 2: Add to Home Assistant
 
-That's it! Just two fields:
+That's it! Just one field:
 
 1. **Settings** → **Devices & Services**
 2. Click **+ Add Integration**
 3. Search for **"Schluter DITRA-HEAT-E-RS1"**
-4. Enter your information:
-   - **Email Address**: Your Schluter account email
-   - **Password**: Your Schluter account password
+4. Enter your **Session-Id** (see *Getting your Session-Id* below)
 5. If you have multiple locations, select which one to add
 6. Click **Submit**
 
-**Note:** Your password is used once to generate a secure token and is **never stored**!
+### Getting your Session-Id
+
+1. Go to https://schluterditraheat.com and log in
+2. Press `F12` to open the browser dev console
+3. Go to **Network** tab and find the `Session-Id` header/attribute
+4. Copy it and paste it into the integration setup
+
+**Note:** The Session-Id is the same value the website uses to log in —
+Home Assistant uses it directly against the Schluter API and never stores
+your account password.
 
 ✅ Done! Your thermostats will now appear as climate entities.
 
@@ -42,15 +58,14 @@ That's it! Just two fields:
 
 ## Security Note
 
-### What Happens to Your Password?
+### What Happens to Your Session-Id?
 
-Your credentials are handled securely:
-1. ✅ Sent directly to Schluter's API (over HTTPS)
-2. ✅ Used once to generate a secure refresh token
-3. ✅ **Immediately discarded** (never stored)
-4. ✅ Only the refresh token is saved
+- ✅ Sent directly to Schluter's API (over HTTPS)
+- ✅ Used only as the `session-id` header for API calls
+- ✅ Your account password is never asked for or stored
+- ✅ Only the Session-Id is saved in Home Assistant
 
-This is the **same process** as logging into the Schluter app or website!
+This is the **same value** the Schluter website uses when you log in.
 
 ---
 
@@ -86,12 +101,12 @@ Try changing temperature:
 
 ### Error: "Invalid authentication"
 
-**Problem**: Wrong username or password
+**Problem**: Session-Id is expired or was copied wrong
 
 **Solutions**:
-1. Double-check your email and password
-2. Try logging into schluterditraheat.com to verify credentials
-3. Check for typos or extra spaces
+1. Re-grab a fresh Session-Id from the browser console (see *Getting your
+   Session-Id* above)
+2. Make sure you copied the whole value with no extra spaces
 
 ### Error: "Cannot connect"
 
@@ -117,7 +132,7 @@ Try changing temperature:
 **Problem**: Installation incomplete
 
 **Solutions**:
-1. Verify files are in `config/custom_components/schluter_heat/`
+1. Verify the repo is cloned inside `custom_components/` and `custom_components/schluter-heat-rs1/schluter_heat/` has the Python files
 2. Check the logs: **Settings** → **System** → **Logs**
 3. Restart Home Assistant
 4. Clear browser cache (Ctrl+Shift+R)
@@ -129,7 +144,7 @@ Try changing temperature:
 **Solutions**:
 1. Check the integration status in **Devices & Services**
 2. Click "Reload" on the integration
-3. If that doesn't work, you may need to reauthenticate (enter your credentials again)
+3. If that doesn't work, you may need to reauthenticate (paste a fresh Session-Id)
 4. Look at logs for error messages
 
 ### Temperature changes don't work
@@ -181,7 +196,7 @@ If you have thermostats in multiple locations:
    - **Settings** → **System** → **Logs**
    - Look for errors mentioning `schluter_heat`
 2. Try reloading the integration
-3. Try removing and re-adding with fresh credentials
+3. Try removing and re-adding with a fresh Session-Id
 
 ### Where to Get Help
 
@@ -202,20 +217,14 @@ When reporting issues, include:
 
 ## Upgrade Guide
 
-### From v1.0.0 to v2.0.0 (Future)
-
-Instructions will be added here when new versions are released.
-
 ### Keeping Up to Date
 
-**HACS Users:**
-- HACS will notify you of updates
-- Click "Update" when available
+```bash
+cd <where-you-cloned>/schluter-heat-rs1
+git pull
+```
 
-**Manual Users:**
-- Watch GitHub releases
-- Download and replace files
-- Restart Home Assistant
+Then restart Home Assistant.
 
 ---
 
@@ -227,7 +236,7 @@ To remove the integration:
 2. Find "Schluter DITRA-HEAT"
 3. Click ⋮ (three dots) → **Delete**
 4. Confirm removal
-5. (Optional) Delete files from `custom_components/schluter_heat/`
+5. (Optional) Delete the cloned `schluter-heat-rs1/` folder from `custom_components/`
 6. Restart Home Assistant
 
 ---
@@ -236,7 +245,5 @@ To remove the integration:
 
 Once installed, check out:
 - **[README.md](README.md)** - Feature overview and examples
-- **[AUTOMATIONS.md](AUTOMATIONS.md)** - More automation ideas
-- **[FAQ.md](FAQ.md)** - Common questions
 
 Happy automating! 🏠🔥
