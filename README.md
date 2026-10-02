@@ -1,4 +1,4 @@
-# Schluter DITRA-HEAT-E-RS1 Integration for Home Assistant - Work in Progress - ALPHA not guranteed to work - there be dragons
+# Schluter DITRA-HEAT-E-RS1 Integration for Home Assistant - It works!
 
 
 Control your Schluter DITRA-HEAT-E-RS1 WiFi floor heating thermostats from Home Assistant!
